@@ -56,6 +56,7 @@ def main():
     if not config:
         logger.error(f'Error loading config from {args.config}. Are you sure you put in the right location?')
         sys.exit(1)
+        
     logger.info(f"Got Config: {config}")
 
     validate_config(config)

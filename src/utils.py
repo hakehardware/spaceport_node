@@ -36,9 +36,9 @@ class Utils:
         
         if match:
             return {
-                'Datetime': Utils.normalize_date(match.group("datetime")),
-                'Level': match.group("level"),
-                'Data': match.group("data")
+                'Event Datetime': Utils.normalize_date(match.group("datetime")),
+                'Event Level': match.group("level"),
+                'Event Data': match.group("data")
             }
         
         else:
