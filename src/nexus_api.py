@@ -1,25 +1,35 @@
 from src.logger import logger
 from datetime import datetime
 import requests
-base_url = 'http://192.168.69.101:5000/hello'
+import sys
+import json
 
 class NexusAPI:
-    def update_node(event, is_register):
-        logger.info(f"Nexus API: Updating Node")
-        # requests.get(base_url)
-
-
-    def update_server(event, is_register):
-
+    def update_server(base_url, event):
         logger.info(f"Nexus API: Updating Server")
-        # requests.get(base_url)
+        local_url = f"{base_url}/insert/server"
+        response = requests.post(local_url, json=event)
+        logger.info(response.json())
 
-    def create_event(event):
-        logger.info(f"Nexus API: Creating Event")
-        return True
+
+    def update_container(base_url, event):
+        logger.info(f"Nexus API: Updating Container")
+        local_url = f"{base_url}/insert/container"
+        response = requests.post(local_url, json=event)
+        logger.info(response.json())
+
+
+    def create_event(base_url, event):
+        logger.info(f"Nexus API: Updating Container")
+        local_url = f"{base_url}/insert/event"
+        response = requests.post(local_url, json=event)
+        if response.status_code == 201: return True
+        else: return False
     
-    def insert_consensus(event):
-        logger.info(f"Nexus API: Inserting Consensus")
+    def insert_consensus(base_url, event):
+        # logger.info(f"Nexus API: Inserting Consensus")
+        pass
 
-    def insert_claim(event):
-        logger.info(f"Nexus API: Inserting Claim")
+    def insert_claim(base_url, event):
+        pass
+        # logger.info(f"Nexus API: Inserting Claim")

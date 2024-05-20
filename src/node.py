@@ -12,11 +12,12 @@ from datetime import datetime
 class Node:
     def __init__(self, config) -> None:
         self.host_ip = config['host_ip']
-        self.name = config['name']
         self.docker_client = docker.from_env()
         self.container_id = None
         self.stop_event = threading.Event()
         self.nexus_url = 'http://192.168.69.101:5000'
+        self.server = {}
+        self.container = {}
 
     def get_node_container(self):
         try:
@@ -24,6 +25,8 @@ class Node:
             for container in containers:
                 if 'subspace/node' in container.image.tags[0]:
                     self.container_id = container.id
+                    self.check_container_version(container.image.labels["org.opencontainers.image.version"])
+
                     logger.info(f"Got Container with ID: {self.container_id}")
 
             if not self.container_id:
@@ -34,10 +37,10 @@ class Node:
             logger.error(f'Error getting container:', exc_info=e)
             sys.exit(1)
 
-    def check_container_version(self):
+    def check_container_version(self, container_image_version):
         try:
-            if self.node_container.get('Image Version') != constants.VERSIONS.get('Image'):
-                logger.warn(f"Expected version {constants.VERSIONS.get('Image')} for container ID {self.node.get('Container ID')}. Hubble may not run as expected, consider updating your container.")
+            if container_image_version != constants.VERSIONS.get('Image'):
+                logger.warn(f"Expected version {constants.VERSIONS.get('Image')} for container ID {self.container_id}. Hubble may not run as expected, consider updating your container.")
         
         except Exception as e:
             logger.warn(f'Error checking container version:', exc_info=e)
@@ -46,21 +49,19 @@ class Node:
         print('SIGINT Received, shutting down stream...')
         self.stop_event.set()  # Signal the threads to stop
 
-
     # Resource Monitor
-    def update_node(self, is_register):
+    def update_container(self, is_register):
         try:
-            node_container = {}
             container = self.docker_client.containers.get(self.container_id)
+            
             network_mode = container.attrs.get('HostConfig').get('NetworkMode')
-            node_container['Name'] = self.name
-            node_container['Host IP'] = self.host_ip
-            node_container['Container ID'] = container.id
-            node_container['Image Version'] = container.image.labels["org.opencontainers.image.version"]
-            node_container['Container Status'] = container.status
-            node_container['Container Started At'] = Utils.normalize_date(container.attrs.get('State').get('StartedAt'))
-            node_container['Container IP'] = container.attrs.get('NetworkSettings').get('Networks')[network_mode].get('IPAddress')
-
+            self.container['Container ID'] = container.id
+            self.container['Container Name'] = container.name
+            self.container['Server Name'] = self.server['Server Name']
+            self.container['Container Image Version'] = container.image.labels["org.opencontainers.image.version"]
+            self.container['Container Status'] = container.status
+            self.container['Container Started At'] = Utils.normalize_date(container.attrs.get('State').get('StartedAt'))
+            self.container['Container IP'] = container.attrs.get('NetworkSettings').get('Networks')[network_mode].get('IPAddress')
 
 
             stats = container.stats(stream=False)
@@ -82,48 +83,48 @@ class Node:
             system_cpu_delta = system_cpu_usage - stats['precpu_stats']['system_cpu_usage']
             cpu_usage_percentage = round((cpu_delta / system_cpu_delta) * online_cpus * 100, 2)
 
-            node_container['Memory Usage'] = memory_usage_gib
-            node_container['Memory Limit'] = memory_limit_gib
-            node_container['Memory Usage Percent'] = memory_usage_percentage
-            node_container['CPU Usage Percent'] = cpu_usage_percentage
-            node_container['Number of CPUs'] = online_cpus
+            self.container['Container Memory Usage'] = memory_usage_gib
+            self.container['Container Memory Limit'] = memory_limit_gib
+            self.container['Container Memory Usage Percent'] = memory_usage_percentage
+            self.container['Container CPU Usage Percent'] = cpu_usage_percentage
+            self.container['Container Number of CPUs'] = online_cpus
 
             event = {
                 'Event Name': 'Register Node' if is_register else 'Update Node',
                 'Event Type': 'Node',
-                'Event Source': self.name,
+                'Event Source': self.container['Container Name'],
                 'Event Level': 'INFO',
                 'Event Datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'Event Data': node_container
+                'Event Data': self.container
             }
 
-            NexusAPI.update_node(event, is_register)
-            NexusAPI.create_event(event)
+            NexusAPI.update_container(self.nexus_url, event)
+            NexusAPI.create_event(self.nexus_url, event)
 
         except Exception as e:
             logger.error("Error updating node container resources:", exc_info=e)
 
     def update_server(self, is_register):
         try:
-            server  = {}
 
             server_info = self.docker_client.info()
-            server['Operating System'] = server_info['OperatingSystem']
-            server['CPUs'] = server_info['NCPU']
-            server['Memory'] = round(server_info['MemTotal'] / (1024 ** 3), 2)
-            server['Name'] = server_info['Name']
+            self.server['Server Name'] = server_info['Name']
+            self.server['Server OS'] = server_info['OperatingSystem']
+            self.server['Server CPUs'] = server_info['NCPU']
+            self.server['Server Memory'] = round(server_info['MemTotal'] / (1024 ** 3), 2)
+            self.server['Server IP'] = self.host_ip
 
             event = {
                 'Event Name': 'Register Server' if is_register else 'Update Server',
                 'Event Type': 'Server',
-                'Event Source': self.name,
+                'Event Source': self.server['Server Name'] ,
                 'Event Level': 'INFO',
                 'Event Datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'Event Data': server
+                'Event Data': self.server
             }
 
-            NexusAPI.update_server(event, is_register)
-            NexusAPI.create_event(event)
+            NexusAPI.update_server(self.nexus_url, event)
+            NexusAPI.create_event(self.nexus_url, event)
 
         except Exception as e:
             logger.error("Error updating server resources:", exc_info=e)
@@ -146,42 +147,45 @@ class Node:
                     logger.warn(f"Container must be running, current status: {container.status}")
                     continue
 
-                start_datetime = Utils.get_prev_date(5, 'minutes')
+                start_datetime = Utils.get_prev_date(1, 'minutes')
                 logger.info(f"Getting logs since {start_datetime}")
 
                 generator = container.logs(since=start_datetime, stdout=True, stderr=True, stream=True)
 
                 for log in generator:
-                    if self.stop_event.is_set():
-                        break
+                    try:
+                        if self.stop_event.is_set():
+                            break
 
-                    parsed_log = Utils.parse_log(log.decode('utf-8').strip())
-                    if not parsed_log:
-                        logger.warn(f"Unable to parse log: ", log.decode('utf-8').strip())
-                        continue
+                        parsed_log = Utils.parse_log(log.decode('utf-8').strip())
+                        if not parsed_log:
+                            logger.warn(f"Unable to parse log: {log}")
+                            continue
+                        
+                        event = EventParse.check_log(parsed_log, self.container['Container Name'])
+                        if not event:
+                            continue
 
-                    event = EventParse.check_log(parsed_log, self.name)
-                    if not event:
-                        continue
+                        created = NexusAPI.create_event(self.nexus_url, event)
+                        
+                        if not created:
+                            continue
 
-                    created = NexusAPI.create_event(event)
-                    
-                    if not created:
-                        continue
-
-                    self.handle_event(event)
+                        self.handle_event(event)
+                    except Exception as e:
+                        logger.error("Error in Generator For Loop:", exc_info=e)
 
             except Exception as e:
                 logger.error("Error in Log Stream Monitor:", exc_info=e)
 
     def handle_event(self, event):
         try:
-            if event['Event Name'] in ['Idle Node', 'Preparing']:
-                response = NexusAPI.insert_consensus(event)
+            if event['Event Name'] in ['Idle', 'Preparing', 'Syncing']:
+                response = NexusAPI.insert_consensus(self.nexus_url, event)
                 return
             
             if event['Event Name'] == 'Claim':
-                response = NexusAPI.insert_claim(event)
+                response = NexusAPI.insert_claim(self.nexus_url, event)
                 return
             
 
@@ -196,18 +200,17 @@ class Node:
         self.log_stream_monitor()
 
     def start_resource_monitor(self):
-        register = True
         while not self.stop_event.is_set():
-            self.update_node(register)
-            self.update_server(register)
-            register = False
+            self.update_server(False)
+            self.update_container(False)
             self.stop_event.wait(10)
 
     # Init
     def init(self):
         try:
             self.get_node_container()
-            self.check_container_version()
+            self.update_server(True)
+            self.update_container(True)
 
             log_monitor_thread = threading.Thread(target=self.start_log_monitor)
             resource_monitor_thread = threading.Thread(target=self.start_resource_monitor)
