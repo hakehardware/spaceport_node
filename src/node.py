@@ -2,6 +2,7 @@ import docker
 import sys
 import threading
 import src.constants as constants
+ 
 
 from src.logger import logger
 from src.nexus_api import NexusAPI
@@ -11,11 +12,11 @@ from datetime import datetime
 
 class Node:
     def __init__(self, config) -> None:
-        self.host_ip = config['host_ip']
+        self.host_ip = config['Host IP']
         self.docker_client = docker.from_env()
         self.container_id = None
         self.stop_event = threading.Event()
-        self.nexus_url = 'http://192.168.69.101:5000'
+        self.nexus_url = config['Nexus URL']
         self.server = {}
         self.container = {}
 
@@ -62,6 +63,7 @@ class Node:
             self.container['Container Status'] = container.status
             self.container['Container Started At'] = Utils.normalize_date(container.attrs.get('State').get('StartedAt'))
             self.container['Container IP'] = container.attrs.get('NetworkSettings').get('Networks')[network_mode].get('IPAddress')
+            self.container['Container Type'] = 'Node'
 
 
             stats = container.stats(stream=False)
@@ -90,9 +92,9 @@ class Node:
             self.container['Container Number of CPUs'] = online_cpus
 
             event = {
-                'Event Name': 'Register Node' if is_register else 'Update Node',
-                'Event Type': 'Node',
-                'Event Source': self.container['Container Name'],
+                'Event Name': 'Register Container' if is_register else 'Update Container',
+                'Event Type': 'Container',
+                'Event Source': self.server['Server Name'],
                 'Event Level': 'INFO',
                 'Event Datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'Event Data': self.container
@@ -147,10 +149,16 @@ class Node:
                     logger.warn(f"Container must be running, current status: {container.status}")
                     continue
 
-                start_datetime = Utils.get_prev_date(1, 'minutes')
-                logger.info(f"Getting logs since {start_datetime}")
+                response = NexusAPI.get_events(self.nexus_url, self.container['Container Name'])
+                if len(response.get('data')) > 0:
+                    logger.info(response.get('data')[0].get('event_datetime'))
+                    start = datetime.strptime(response.get('data')[0].get('event_datetime'), "%Y-%m-%d %H:%M:%S")
+                else: 
+                    start = datetime.min
 
-                generator = container.logs(since=start_datetime, stdout=True, stderr=True, stream=True)
+                logger.info(f"Getting logs since {start}")
+
+                generator = container.logs(since=start, stdout=True, stderr=True, stream=True)
 
                 for log in generator:
                     try:
@@ -165,11 +173,13 @@ class Node:
                         event = EventParse.check_log(parsed_log, self.container['Container Name'])
                         if not event:
                             continue
-
+                            
                         created = NexusAPI.create_event(self.nexus_url, event)
                         
                         if not created:
                             continue
+                        
+                        logger.info(created)
 
                         self.handle_event(event)
                     except Exception as e:
@@ -181,14 +191,11 @@ class Node:
     def handle_event(self, event):
         try:
             if event['Event Name'] in ['Idle', 'Preparing', 'Syncing']:
-                response = NexusAPI.insert_consensus(self.nexus_url, event)
-                return
+                NexusAPI.insert_consensus(self.nexus_url, event)
             
             if event['Event Name'] == 'Claim':
-                response = NexusAPI.insert_claim(self.nexus_url, event)
-                return
+                NexusAPI.insert_claim(self.nexus_url, event)
             
-
         except Exception as e:
             logger.error("Error handling event:", exc_info=e)
         
