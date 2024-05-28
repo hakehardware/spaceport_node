@@ -25,7 +25,18 @@ class NexusAPI:
         else: return False
 
     def get_events(base_url, name):
-        local_url = f"{base_url}/get/events?event_source={name}"
+        local_url = f"{base_url}/get/events"
+        response = requests.get(local_url)
+        json_data = response.json()
+
+        if response.status_code < 300:
+            return json_data
+        else:
+            logger.error(f"Nexus API: Error getting events {json_data.get('message')}")
+            return None
+        
+    def get_latest_events(base_url, name):
+        local_url = f"{base_url}/get/events?event_source={name}&event_type=Node"
         response = requests.get(local_url)
         json_data = response.json()
 

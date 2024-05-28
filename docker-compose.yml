@@ -2,7 +2,7 @@ version: '3.7'
 services:
   app:
     build: .
-    container_name: spaceport_node
-    command: ["python", "main.py", "--nexus", "http://192.168.69.101:5000", "--server", "192.168.69.104"]
+    container_name: spaceport_node_dev
+    command: ["python", "main.py", "--nexus", "http://192.168.69.101:9998", "--server", "192.168.69.104"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Need this to run docker commands
